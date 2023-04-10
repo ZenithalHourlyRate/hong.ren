@@ -9,8 +9,8 @@
         width: 100%;
       }
       a {
-	color: inherit;
-	text-decoration: none;
+        color: inherit;
+        text-decoration: none;
       }
       #container {
         height: 100%;
@@ -23,7 +23,19 @@
         font-size: 120px;
         font-weight: 900;
         text-align: center;
-        color: red;
+        background: linear-gradient(124deg,
+            #ff2400, #e81d1d, #e8b71d, #e3e81d, #1de840, #1ddde8, #2b1de8, #dd00f3, #dd00f3
+        );
+        background-size: 1000% 1000%;
+        -webkit-background-clip: text;
+        -moz-background-clip: text;
+        -webkit-text-fill-color: transparent; 
+        -moz-text-fill-color: transparent;
+        animation: rainbow 30s ease-in-out infinite;
+      }
+      @keyframes rainbow {
+          0%{background-position:0% 0%;}
+          50%{background-position:100% 100%;}
       }
     </style>
   </head>
