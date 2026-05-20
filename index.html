@@ -4,10 +4,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Continuous Triangle Tide</title>
+    <title>Audio Reactive Triangle Tide</title>
     <style>
       :root {
         --red: #ff0000;
+        --ink: #111111;
+        --muted: #666666;
+        --panel: rgba(255, 255, 255, 0.76);
+        --panel-border: rgba(17, 17, 17, 0.1);
         --bg: #f3f3f3;
       }
 
@@ -23,6 +27,20 @@
       body {
         display: grid;
         place-items: center;
+        color: var(--ink);
+        font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+      }
+
+      .stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 100vw;
+        height: 100vh;
+        background:
+          radial-gradient(circle at 50% 48%, rgba(255, 0, 0, 0.08), transparent 31vmin),
+          radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.9), transparent 32vmin),
+          linear-gradient(140deg, #f8f8f8 0%, #ececec 100%);
       }
 
       svg {
@@ -41,21 +59,142 @@
       .triangle {
         fill: var(--red);
       }
+
+      .controls {
+        position: fixed;
+        left: 24px;
+        right: 24px;
+        bottom: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        z-index: 1;
+        transition: opacity 180ms ease, transform 180ms ease;
+      }
+
+      .stage.menu-hidden .controls {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(18px);
+      }
+
+      .panel {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border: 1px solid var(--panel-border);
+        border-radius: 999px;
+        background: var(--panel);
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.1);
+        backdrop-filter: blur(16px);
+      }
+
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 16px;
+        background: var(--ink);
+        color: white;
+        font: inherit;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: rgba(17, 17, 17, 0.08);
+        color: var(--ink);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .meter {
+        width: 120px;
+        height: 8px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(17, 17, 17, 0.1);
+      }
+
+      .meter-fill {
+        width: 0%;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--red);
+        transition: width 80ms linear;
+      }
+
+      .status {
+        max-width: min(420px, calc(100vw - 72px));
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      @media (max-width: 640px) {
+        svg {
+          width: min(88vmin, 820px);
+        }
+
+        .controls {
+          left: 12px;
+          right: 12px;
+          bottom: 12px;
+        }
+
+        .panel {
+          width: 100%;
+          justify-content: center;
+          border-radius: 24px;
+          flex-wrap: wrap;
+        }
+
+        .status {
+          text-align: center;
+        }
+      }
     </style>
   </head>
   <body>
-    <svg id="logo" viewBox="0 0 1000 1000" aria-label="Triangle with continuous tide">
-      <g id="logoGroup">
-        <g id="water" pointer-events="none"></g>
-        <polygon id="triangleShape" class="triangle" points="500,310 650,590 350,590" />
-      </g>
-    </svg>
+    <main class="stage">
+      <svg id="logo" viewBox="0 0 1000 1000" aria-label="Audio reactive triangle">
+        <g id="logoGroup">
+          <g id="water" pointer-events="none"></g>
+          <polygon id="triangleShape" class="triangle" points="500,310 650,590 350,590" />
+        </g>
+      </svg>
+
+      <div class="controls">
+        <div class="panel">
+          <button id="micButton" type="button">Use Microphone</button>
+          <button id="systemButton" class="secondary" type="button">Capture Tab Audio</button>
+          <button id="hideButton" class="secondary" type="button">Hide Menu (H)</button>
+          <div class="meter" aria-hidden="true">
+            <div id="meterFill" class="meter-fill"></div>
+          </div>
+          <div id="status" class="status">Click microphone, then speak or play audio near the Mac. Press H to hide/show this menu.</div>
+        </div>
+      </div>
+    </main>
 
     <script>
       const NS = "http://www.w3.org/2000/svg";
+      const stage = document.querySelector(".stage");
       const svg = document.getElementById("logo");
       const logoGroup = document.getElementById("logoGroup");
       const waterGroup = document.getElementById("water");
+      const micButton = document.getElementById("micButton");
+      const systemButton = document.getElementById("systemButton");
+      const hideButton = document.getElementById("hideButton");
+      const meterFill = document.getElementById("meterFill");
+      const status = document.getElementById("status");
 
       const triangle = [
         { x: 500, y: 310 },
@@ -141,22 +280,24 @@
         return (cumulativeLengths[edgeIndex] + edgeLengths[edgeIndex] * localU) / totalLength;
       }
 
-      function waveValue(s, t, cfg, pulseBoost) {
-        // Spatial frequencies are exactly 1, 2, and 3 around the whole triangle loop.
+      function waveValue(s, t, cfg, pulseBoost, pitchAmount) {
+        // Low pitch removes fine ripples; high pitch brightens and sharpens the tide.
+        const midDetail = lerp(0.28, 1.22, pitchAmount);
+        const highDetail = lerp(0.08, 1.55, pitchAmount);
         return (
           cfg.a1 * Math.sin(2 * Math.PI * (1.0 * s + cfg.v1 * t + cfg.p1)) +
-          cfg.a2 * Math.sin(2 * Math.PI * (3.0 * s + cfg.v2 * t + cfg.p2)) +
-          cfg.a3 * Math.sin(2 * Math.PI * (5.0 * s + cfg.v3 * t + cfg.p3))
+          cfg.a2 * midDetail * Math.sin(2 * Math.PI * (3.0 * s + cfg.v2 * t + cfg.p2)) +
+          cfg.a3 * highDetail * Math.sin(2 * Math.PI * (5.0 * s + cfg.v3 * t + cfg.p3))
         ) * pulseBoost;
       }
 
-      function offsetAt(s, t, cfg, pulseAmount) {
+      function offsetAt(s, t, cfg, pulseAmount, pitchAmount) {
         const pulseBoost = 1 + pulseAmount * 0.5;
         const pulseLift = pulseAmount * cfg.pulseLift;
-        return Math.max(4, cfg.baseOffset + pulseLift + waveValue(s, t, cfg, pulseBoost));
+        return Math.max(4, cfg.baseOffset + pulseLift + waveValue(s, t, cfg, pulseBoost, pitchAmount));
       }
 
-      function addSide(points, edgeIndex, cfg, t, pulseAmount) {
+      function addSide(points, edgeIndex, cfg, t, pulseAmount, pitchAmount) {
         const [a, b] = edges[edgeIndex];
         const { normal } = edgeInfos[edgeIndex];
         const samples = 180;
@@ -167,7 +308,7 @@
 
           const u = j / samples;
           const s = globalS(edgeIndex, u);
-          const offset = offsetAt(s, t, cfg, pulseAmount);
+          const offset = offsetAt(s, t, cfg, pulseAmount, pitchAmount);
 
           const x = lerp(a.x, b.x, u) + normal.x * offset;
           const y = lerp(a.y, b.y, u) + normal.y * offset;
@@ -175,10 +316,10 @@
         }
       }
 
-      function addCornerArc(points, vertexIndex, fromNormal, toNormal, cfg, t, pulseAmount) {
+      function addCornerArc(points, vertexIndex, fromNormal, toNormal, cfg, t, pulseAmount, pitchAmount) {
         const center = triangle[vertexIndex];
         const s = (cumulativeLengths[vertexIndex] / totalLength) % 1;
-        const radius = offsetAt(s, t, cfg, pulseAmount);
+        const radius = offsetAt(s, t, cfg, pulseAmount, pitchAmount);
 
         const fromAngle = Math.atan2(fromNormal.y, fromNormal.x);
         const toAngle = Math.atan2(toNormal.y, toNormal.x);
@@ -211,11 +352,11 @@
         );
       }
 
-      function buildBandPath(cfg, t, pulseAmount) {
+      function buildBandPath(cfg, t, pulseAmount, pitchAmount) {
         const outer = [];
 
         for (let edgeIndex = 0; edgeIndex < 3; edgeIndex++) {
-          addSide(outer, edgeIndex, cfg, t, pulseAmount);
+          addSide(outer, edgeIndex, cfg, t, pulseAmount, pitchAmount);
 
           const nextVertex = (edgeIndex + 1) % 3;
           const nextEdge = (edgeIndex + 1) % 3;
@@ -226,7 +367,8 @@
             edgeNormals[nextEdge],
             cfg,
             t,
-            pulseAmount
+            pulseAmount,
+            pitchAmount
           );
         }
 
@@ -288,6 +430,18 @@
 
       let pulseValue = 0;
       let pulseVelocity = 0;
+      let audioContext = null;
+      let analyser = null;
+      let audioSource = null;
+      let audioData = null;
+      let frequencyData = null;
+      let activeStream = null;
+      let audioLevel = 0;
+      let smoothedAudioLevel = 0;
+      let pitchLevel = 0;
+      let smoothedPitchLevel = 0;
+      let waveClock = 0;
+      let lastFrameMs = null;
 
       function pulseTriangle() {
         pulseVelocity += 1.0;
@@ -295,19 +449,209 @@
 
       svg.addEventListener("click", pulseTriangle);
 
-      function animate(ms) {
-        const t = ms * 0.01;
+      function setStatus(message) {
+        status.textContent = message;
+      }
 
-        // Small damped spring pulse. It blooms the tide and slightly scales the whole mark.
-        pulseVelocity += -pulseValue * 0.18;
+      function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function smoothstep(edge0, edge1, value) {
+        const x = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+        return x * x * (3 - 2 * x);
+      }
+
+      function toggleMenu(forceHidden) {
+        const shouldHide = forceHidden ?? !stage.classList.contains("menu-hidden");
+        stage.classList.toggle("menu-hidden", shouldHide);
+        hideButton.textContent = shouldHide ? "Show Menu (H)" : "Hide Menu (H)";
+      }
+
+      function stopActiveStream() {
+        if (!activeStream) return;
+        for (const track of activeStream.getTracks()) {
+          track.stop();
+        }
+        audioSource = null;
+        frequencyData = null;
+        activeStream = null;
+      }
+
+      async function connectAudioStream(stream, label) {
+        stopActiveStream();
+
+        audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
+        }
+
+        activeStream = stream;
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.78;
+
+        audioSource = audioContext.createMediaStreamSource(stream);
+        audioSource.connect(analyser);
+        audioData = new Uint8Array(analyser.fftSize);
+        frequencyData = new Uint8Array(analyser.frequencyBinCount);
+
+        const connectedStream = stream;
+        const [track] = stream.getAudioTracks();
+        if (track) {
+          track.addEventListener("ended", () => {
+            if (activeStream !== connectedStream) return;
+            analyser = null;
+            audioSource = null;
+            audioData = null;
+            frequencyData = null;
+            activeStream = null;
+            setStatus("Audio capture stopped. Start capture again to drive the triangle.");
+          });
+        }
+
+        setStatus(`${label} is driving the triangle. Volume controls size; higher pitch accelerates and sharpens the waves.`);
+      }
+
+      async function startMicrophone() {
+        try {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            setStatus("This browser cannot capture microphone audio here. Open the page from localhost in Chrome, Edge, or Safari.");
+            return;
+          }
+
+          micButton.disabled = true;
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
+          });
+          await connectAudioStream(stream, "Microphone audio");
+        } catch (error) {
+          setStatus(`Microphone capture failed: ${error.message}`);
+        } finally {
+          micButton.disabled = false;
+        }
+      }
+
+      async function startDisplayAudio() {
+        try {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            setStatus("This browser does not support tab audio capture. Use microphone capture, or route Mac audio through a virtual input such as BlackHole.");
+            return;
+          }
+
+          systemButton.disabled = true;
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
+          });
+
+          const audioTracks = stream.getAudioTracks();
+          for (const videoTrack of stream.getVideoTracks()) {
+            videoTrack.stop();
+          }
+
+          if (audioTracks.length === 0) {
+            setStatus("No audio track was shared. In Chrome, choose a tab/window and enable Share audio. For full Mac system audio, use a virtual device such as BlackHole as the microphone input.");
+            return;
+          }
+
+          await connectAudioStream(new MediaStream(audioTracks), "Shared tab audio");
+        } catch (error) {
+          setStatus(`Tab audio capture failed: ${error.message}`);
+        } finally {
+          systemButton.disabled = false;
+        }
+      }
+
+      function readAudioFeatures() {
+        if (!analyser || !audioData || !frequencyData) return { level: 0, pitch: 0 };
+
+        analyser.getByteTimeDomainData(audioData);
+        analyser.getByteFrequencyData(frequencyData);
+
+        let sumSquares = 0;
+        let peak = 0;
+        for (let i = 0; i < audioData.length; i++) {
+          const sample = (audioData[i] - 128) / 128;
+          sumSquares += sample * sample;
+          peak = Math.max(peak, Math.abs(sample));
+        }
+
+        const rms = Math.sqrt(sumSquares / audioData.length);
+        // RMS is physically useful but visually too conservative, so blend in peak energy.
+        const shaped = Math.min(1, rms * 8.5 + peak * 0.45);
+        const level = shaped * shaped * (3 - 2 * shaped);
+
+        let weightedFrequency = 0;
+        let totalWeight = 0;
+        let peakFrequency = 0;
+        let peakMagnitude = 0;
+        const binHz = audioContext.sampleRate / (2 * frequencyData.length);
+
+        for (let i = 0; i < frequencyData.length; i++) {
+          const frequency = i * binHz;
+          if (frequency < 80 || frequency > 6000) continue;
+
+          const magnitude = frequencyData[i] / 255;
+          const weight = magnitude * magnitude;
+          weightedFrequency += frequency * weight;
+          totalWeight += weight;
+
+          if (magnitude > peakMagnitude) {
+            peakMagnitude = magnitude;
+            peakFrequency = frequency;
+          }
+        }
+
+        const centroid = totalWeight > 0 ? weightedFrequency / totalWeight : peakFrequency;
+        const brightness = smoothstep(420, 3200, centroid);
+        const activityGate = smoothstep(0.025, 0.16, level);
+        return { level, pitch: brightness * activityGate };
+      }
+
+      micButton.addEventListener("click", startMicrophone);
+      systemButton.addEventListener("click", startDisplayAudio);
+      hideButton.addEventListener("click", () => toggleMenu());
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key.toLowerCase() !== "h") return;
+        const target = event.target;
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+        toggleMenu();
+      });
+
+      function animate(ms) {
+        const deltaMs = lastFrameMs === null ? 16.67 : Math.min(50, ms - lastFrameMs);
+        lastFrameMs = ms;
+
+        const audioFeatures = readAudioFeatures();
+        audioLevel = audioFeatures.level;
+        pitchLevel = audioFeatures.pitch;
+        smoothedAudioLevel += (audioLevel - smoothedAudioLevel) * (audioLevel > smoothedAudioLevel ? 0.32 : 0.08);
+        smoothedPitchLevel += (pitchLevel - smoothedPitchLevel) * (pitchLevel > smoothedPitchLevel ? 0.24 : 0.06);
+
+        const waveSpeed = 0.62 + smoothedPitchLevel * 2.9 + smoothedAudioLevel * 0.25;
+        waveClock += deltaMs * 0.01 * waveSpeed;
+
+        // Damped spring pulse. Clicks inject energy; live audio continuously pushes it.
+        pulseVelocity += -pulseValue * 0.18 + smoothedAudioLevel * 0.24;
         pulseVelocity *= 0.86;
         pulseValue += pulseVelocity * 0.12;
 
-        const pulseAmount = Math.min(1.25, Math.max(0, pulseValue));
-        const scale = 1 + pulseAmount * 0.045;
+        const pulseAmount = Math.min(1.65, Math.max(0, pulseValue + smoothedAudioLevel * 0.9));
+        const scale = 1 + pulseAmount * 0.045 + smoothedAudioLevel * 0.025;
+        meterFill.style.width = `${Math.round(smoothedAudioLevel * 100)}%`;
 
         for (const layer of layers) {
-          layer.path.setAttribute("d", buildBandPath(layer.cfg, t, pulseAmount));
+          layer.path.setAttribute("d", buildBandPath(layer.cfg, waveClock, pulseAmount, smoothedPitchLevel));
         }
 
         logoGroup.setAttribute(
@@ -322,4 +666,3 @@
     </script>
   </body>
 </html>
-
